@@ -1,0 +1,58 @@
+{{- if .Values.httpRoute.enabled }}
+{{- with .Values.httpRoute.certManager }}
+{{- if .enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "openGym.name" $ }}-tls
+spec:
+  dnsNames:
+    - {{ $.Values.api.rpID | quote }}
+  issuerRef:
+    {{- toYaml .issuerRef | nindent 4 }}
+  secretName: {{ $.Values.httpRoute.tlsSecret }}
+---
+{{- end }}
+{{- end }}
+{{- with .Values.httpRoute.referenceGrant }}
+{{- if .enabled }}
+# The Gateway lives in another namespace, and its HTTPS listener has to read the certificate
+# Secret: a cross-namespace reference to a Secret needs this grant. The route below points at a
+# Service in its own namespace and needs none.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: {{ include "openGym.name" $ }}-allow-gateway
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: {{ .gatewayNamespace }}
+  to:
+    - group: ""
+      kind: Secret
+      name: {{ $.Values.httpRoute.tlsSecret }}
+---
+{{- end }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "openGym.name" . }}
+spec:
+  {{- with .Values.httpRoute.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  hostnames:
+    - {{ .Values.api.rpID | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # The Service's port (see service.yaml), not the container's.
+        - name: {{ include "openGym.name" . }}
+          port: {{ .Values.web.nginxPort }}
+{{- end }}

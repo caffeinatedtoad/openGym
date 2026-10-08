@@ -1,0 +1,52 @@
+name: Publish Helm chart
+
+# Publishes chart/openGym to GHCR as an OCI artifact, next to the images:
+# oci://ghcr.io/<owner>/charts/opengym. A chart version is published once.
+# A push that changes the chart without bumping `version` in Chart.yaml
+# is skipped rather than overwriting a version people may already run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'chart/**'
+      - '.github/workflows/publish-chart.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lowercase owner (registry names must be lowercase)
+        id: repo
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Lint
+        run: helm lint chart/openGym
+
+      - name: Log in to GHCR
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io --username '${{ github.actor }}' --password-stdin
+
+      - name: Check whether this version is already published
+        id: check
+        run: |
+          NAME=$(helm show chart chart/openGym | sed -n 's/^name: //p')
+          VERSION=$(helm show chart chart/openGym | sed -n 's/^version: //p')
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if helm show chart "oci://ghcr.io/${{ steps.repo.outputs.owner }}/charts/$NAME" --version "$VERSION" > /dev/null 2>&1; then
+            echo "::notice::$NAME $VERSION is already published; bump version in Chart.yaml to publish again."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package and push
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          helm package chart/openGym --destination dist
+          helm push "dist/${{ steps.check.outputs.name }}-${{ steps.check.outputs.version }}.tgz" \
+            "oci://ghcr.io/${{ steps.repo.outputs.owner }}/charts"

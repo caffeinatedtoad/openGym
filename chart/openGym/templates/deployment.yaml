@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: {{ include "openGym.name" . }}
+  name: {{ include "openGym.name" . }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ include "openGym.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "openGym.name" . }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8}}
+      {{- end }}
+      initContainers:
+        - name: media-download
+          image: {{ .Values.mediaInit.repository }}:{{ .Values.mediaInit.tag }}
+          imagePullPolicy: {{ .Values.mediaInit.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              mkdir -p /out/img /out/gif
+              if [ -z "$(ls -A /out/img 2>/dev/null)" ]; then
+                git clone --depth 1 https://github.com/hasaneyldrm/exercises-dataset /tmp/ds
+                cp /tmp/ds/images/*.jpg /out/img/ && cp /tmp/ds/videos/*.gif /out/gif/
+              fi
+          volumeMounts:
+            - name: {{ .Values.volumes.media.name }}
+              mountPath: /out
+          {{- with .Values.mediaInit.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      containers:
+        - name: api
+          image: {{ .Values.api.repository }}:{{ .Values.api.tag | default .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.api.pullPolicy }}
+          env:
+            - name: PORT
+              value: {{ .Values.api.port | quote }}
+            - name: DATA_DIR
+              value: {{ .Values.api.dataDir | quote }}
+            - name: RP_ID
+              value: {{ .Values.api.rpID | quote }}
+            - name: ORIGIN
+              value: {{ .Values.api.origin | quote }}
+              {{- with .Values.api.extraEnv }}
+              {{- toYaml . | nindent 12 }}
+              {{- end }}
+          ports:
+            - containerPort: {{ .Values.api.port }}
+              name: http
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 30
+          volumeMounts:
+            - name: {{ .Values.volumes.data.name }}
+              mountPath: {{ .Values.api.dataDir }}
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        - name: web
+          image: {{ .Values.web.repository }}:{{ .Values.web.tag | default .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.web.pullPolicy }}
+          env:
+            - name: NGINX_PORT
+              value: {{ .Values.web.nginxPort | quote }}
+            # Both containers share the pod's network, so the API is on localhost. An IP here
+            # also means nginx never needs RESOLVER (Docker's DNS by default) to find it.
+            - name: BACKEND
+              value: "127.0.0.1"
+            - name: PORT
+              value: {{ .Values.web.port | quote }}
+              {{- with .Values.web.extraEnv}}
+              {{-  toYaml . | nindent 12}}
+              {{- end }}
+          ports:
+            - containerPort: {{ .Values.web.nginxPort }}
+              name: web
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.web.nginxPort }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.web.nginxPort }}
+            initialDelaySeconds: 30
+          volumeMounts:
+            - name: {{ .Values.volumes.media.name }}
+              mountPath: /usr/share/nginx/html/img
+              subPath: img
+            - name: {{ .Values.volumes.media.name }}
+              mountPath: /usr/share/nginx/html/gif
+              subPath: gif
+          {{- with .Values.web.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: {{ .Values.volumes.data.name }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.data.name }}
+        - name: {{ .Values.volumes.media.name }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.media.name }}

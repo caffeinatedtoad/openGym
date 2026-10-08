@@ -1,0 +1,8 @@
+{{- if .Values.httpRoute.enabled }}
+openGym is routed through your Gateway at:
+  https://{{ .Values.api.rpID }}
+{{- else }}
+openGym has no route from outside the cluster. To reach it locally:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "openGym.name" . }} 8080:{{ .Values.web.nginxPort }}
+  then open http://localhost:8080 (passkey sign-in needs api.rpID=localhost for this)
+{{- end }}
